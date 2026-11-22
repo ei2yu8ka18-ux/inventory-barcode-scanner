@@ -12,51 +12,93 @@
     main{max-width:560px;margin:auto;background:white;border-radius:18px;padding:16px;box-shadow:0 4px 18px #0001}
     h1{font-size:20px;margin:0 0 8px}
     p{font-size:13px;line-height:1.65;color:#4b5563}
-    #reader{width:100%;margin:14px auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#111}
+    #reader{width:100%;margin:14px auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#111;min-height:160px}
     #reader video{object-fit:contain}
     #message{padding:12px;border-radius:10px;background:#ecfdf5;color:#065f46;font-size:13px;min-height:44px}
-    button{width:100%;border:0;border-radius:10px;padding:13px;margin-top:12px;background:#059669;color:white;font-size:15px;font-weight:bold}
+    button{width:100%;border:0;border-radius:10px;padding:14px;margin-top:11px;background:#059669;color:white;font-size:15px;font-weight:bold}
     button.secondary{background:#e5e7eb;color:#374151}
+    button.photo{background:#2563eb}
+    button:disabled{opacity:.55}
     .small{font-size:11px;color:#6b7280}
     .tips{background:#f9fafb;border-radius:10px;padding:10px 12px;margin-top:10px}
+    .hidden{display:none!important}
   </style>
 </head>
 <body>
 <main>
   <h1>📷 JANコード読み取り</h1>
-  <p>商品のバーコード全体を枠内に入れてください。ピントが合ってから読み取ります。</p>
-  <div id="message">カメラを起動しています。ブラウザからカメラの使用を許可してください。</div>
+  <p>まずはライブカメラで読み取ります。ピントが合わず読み取れない場合は、下の「写真で読み取る」を使ってください。</p>
+  <div id="message">カメラを起動しています。</div>
   <div id="reader"></div>
+
+  <button id="photoModeButton" class="photo" type="button">📸 ピントが合わないとき：写真で読み取る</button>
+  <button id="takePhotoButton" class="photo hidden" type="button">カメラでバーコードを撮影する</button>
+  <input id="photoInput" class="hidden" type="file" accept="image/*" capture="environment">
+
   <div class="tips">
-    <p style="margin:0"><strong>読み取れないとき</strong><br>
-      ・スマートフォンを商品から<strong>15～20cm程度</strong>離す<br>
-      ・バーコードとカメラを平行にし、バーコード全体を映す<br>
-      ・明るい場所で、照明の反射が入らないようにする<br>
-      ・カメラのレンズを拭き、ピントが合うまで少し待つ</p>
+    <p style="margin:0"><strong>写真で撮るときのコツ</strong><br>
+      ・近づきすぎず、バーコードの線がくっきり見える距離で撮る<br>
+      ・バーコード全体と上下の余白を入れる<br>
+      ・スマートフォンとバーコードを平行にする<br>
+      ・反射や影を避け、明るい場所で撮影する</p>
   </div>
-  <button class="secondary" type="button" onclick="location.reload()">カメラを再起動</button>
-  <p class="small">カメラ映像自体がぼやける場合は、iPhone標準の「カメラ」アプリでも同じ距離でピントが合うか確認してください。</p>
+  <button class="secondary" type="button" onclick="location.reload()">ライブカメラに戻る／再起動</button>
+  <p class="small">写真撮影を使うと、iPhone側の撮影画面でピントを合わせてから静止画を読み取ります。撮影後、JANコードが認識されると在庫管理画面に戻ります。</p>
 </main>
 <script>
 (function(){
   const params = new URLSearchParams(location.search);
   const returnUrl = params.get('return') || '';
   const message = document.getElementById('message');
+  const photoModeButton = document.getElementById('photoModeButton');
+  const takePhotoButton = document.getElementById('takePhotoButton');
+  const photoInput = document.getElementById('photoInput');
 
   // 戻り先はGoogle Apps ScriptのWebアプリURLに限定
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(returnUrl)) {
     message.textContent = '戻り先URLが正しくありません。在庫管理画面から読み取りボタンを押してください。';
+    photoModeButton.disabled = true;
     return;
   }
   if (!window.Html5Qrcode) {
     message.textContent = '読み取りライブラリを読み込めませんでした。通信環境を確認して再読み込みしてください。';
+    photoModeButton.disabled = true;
     return;
   }
 
-  const scanner = new Html5Qrcode('reader');
+  const scanner = new Html5Qrcode('reader', {
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E
+    ]
+  });
+  let cameraRunning = false;
   let completed = false;
+  let photoMode = false;
 
-  // 読み取り枠を画面幅に合わせて広げ、JANコード全体を捉えやすくする
+  function redirectWithJan(decodedText) {
+    if (completed) return;
+    const jan = String(decodedText || '').replace(/[^0-9]/g, '');
+    if (![8,12,13,14].includes(jan.length)) {
+      message.textContent = 'JANコードとして認識できませんでした。バーコード全体が鮮明に写るように撮り直してください。';
+      return;
+    }
+    completed = true;
+    message.textContent = '読み取り成功：' + jan + '　在庫管理画面へ戻ります…';
+    const goBack = () => {
+      const target = new URL(returnUrl);
+      target.searchParams.set('jan', jan);
+      location.href = target.toString();
+    };
+    if (cameraRunning) {
+      scanner.stop().then(() => { cameraRunning = false; goBack(); }).catch(() => goBack());
+    } else {
+      goBack();
+    }
+  }
+
   const config = {
     fps: 15,
     qrbox: function(viewfinderWidth, viewfinderHeight) {
@@ -73,43 +115,73 @@
     ]
   };
 
-  Html5Qrcode.getCameras().then(cameras => {
-    if (!cameras || !cameras.length) throw new Error('利用できるカメラが見つかりません。');
+  function startLiveCamera() {
+    Html5Qrcode.getCameras().then(cameras => {
+      if (!cameras || !cameras.length) throw new Error('利用できるカメラが見つかりません。');
+      const back = cameras.find(c => /back|rear|environment|背面/i.test(c.label));
+      message.textContent = 'ライブカメラで読み取り中です。ピントが合う距離まで少し離して映してください。';
+      return scanner.start(
+        back ? back.id : { facingMode: 'environment' },
+        config,
+        decodedText => redirectWithJan(decodedText),
+        () => {}
+      );
+    }).then(() => {
+      cameraRunning = true;
+      // 対応ブラウザのみ連続オートフォーカスを要求。iOS Safariでは制御できない場合があります。
+      try {
+        const capabilities = scanner.getRunningTrackCapabilities();
+        if (capabilities && capabilities.focusMode) {
+          scanner.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        }
+      } catch (e) {}
+    }).catch(err => {
+      message.textContent = 'ライブカメラを起動できませんでした。写真で読み取る方法をお試しください。詳細：' + (err && err.message ? err.message : err);
+      photoModeButton.textContent = '📸 写真で読み取る';
+    });
+  }
 
-    // 背面カメラを優先。解像度は可能な範囲で高くする。
-    const back = cameras.find(c => /back|rear|environment|背面/i.test(c.label));
-    config.videoConstraints = back
-      ? { deviceId: { exact: back.id }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-      : { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } };
-
-    message.textContent = '背面カメラで読み取り中です。バーコードを15～20cm程度離して映してください。';
-    return scanner.start(back ? back.id : { facingMode: 'environment' }, config, decodedText => {
-      if (completed) return;
-      const jan = String(decodedText || '').replace(/[^0-9]/g, '');
-      if (![8,12,13,14].includes(jan.length)) {
-        message.textContent = 'JANコードとして認識できませんでした。バーコード全体を枠内に合わせてください。';
-        return;
-      }
-      completed = true;
-      message.textContent = '読み取り成功：' + jan + '　在庫管理画面へ戻ります…';
-      scanner.stop().catch(() => {}).finally(() => {
-        const target = new URL(returnUrl);
-        target.searchParams.set('jan', jan);
-        location.href = target.toString();
-      });
-    }, () => {});
-  }).then(() => {
-    // focusModeを公開しているブラウザでのみ連続オートフォーカスを要求する。
-    // iOS Safariなど未対応環境では標準のカメラオートフォーカスに任せる。
+  photoModeButton.addEventListener('click', async () => {
+    if (completed || photoMode) return;
+    photoMode = true;
+    photoModeButton.disabled = true;
+    message.textContent = 'ライブカメラを停止しています…';
     try {
-      const capabilities = scanner.getRunningTrackCapabilities();
-      if (capabilities && capabilities.focusMode) {
-        scanner.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+      if (cameraRunning) {
+        await scanner.stop();
+        cameraRunning = false;
       }
-    } catch (e) {}
-  }).catch(err => {
-    message.textContent = 'カメラを起動できませんでした：' + (err && err.message ? err.message : err) + '。Safariのカメラ許可とHTTPS接続を確認してください。';
+      message.textContent = '写真撮影モードです。「カメラでバーコードを撮影する」を押してください。';
+      takePhotoButton.classList.remove('hidden');
+      photoModeButton.classList.add('hidden');
+    } catch (err) {
+      photoMode = false;
+      photoModeButton.disabled = false;
+      message.textContent = 'カメラを切り替えられませんでした。ページを再読み込みしてください。';
+    }
   });
+
+  takePhotoButton.addEventListener('click', () => {
+    // file picker/camera launch is called directly from the user's tap for iOS Safari.
+    photoInput.click();
+  });
+
+  photoInput.addEventListener('change', async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    takePhotoButton.disabled = true;
+    message.textContent = '写真を解析しています。少しお待ちください…';
+    try {
+      const decoded = await scanner.scanFile(file, true);
+      redirectWithJan(decoded);
+    } catch (err) {
+      message.textContent = '写真からバーコードを読み取れませんでした。バーコード全体にピントが合っている写真でもう一度お試しください。';
+      takePhotoButton.disabled = false;
+      photoInput.value = '';
+    }
+  });
+
+  startLiveCamera();
 })();
 </script>
 </body>
