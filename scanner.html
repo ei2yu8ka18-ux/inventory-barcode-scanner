@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#059669">
+  <title>JANコード読み取り</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    *{box-sizing:border-box} body{margin:0;padding:18px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",Meiryo,sans-serif;background:#f3f4f6;color:#1f2937}
+    main{max-width:520px;margin:auto;background:white;border-radius:18px;padding:18px;box-shadow:0 4px 18px #0001}
+    h1{font-size:20px;margin:0 0 8px} p{font-size:13px;line-height:1.6;color:#4b5563}
+    #reader{width:100%;margin:16px auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+    #message{padding:12px;border-radius:10px;background:#ecfdf5;color:#065f46;font-size:13px;min-height:44px}
+    button{width:100%;border:0;border-radius:10px;padding:13px;margin-top:12px;background:#059669;color:white;font-size:15px;font-weight:bold}
+    button.secondary{background:#e5e7eb;color:#374151} .small{font-size:11px;color:#6b7280}
+  </style>
+</head>
+<body>
+<main>
+  <h1>📷 JANコード読み取り</h1>
+  <p>商品のバーコードを枠内に映してください。読み取りが完了すると、在庫管理画面へ自動で戻ります。</p>
+  <div id="message">カメラを起動しています。ブラウザからカメラの使用を許可してください。</div>
+  <div id="reader"></div>
+  <button class="secondary" type="button" onclick="location.reload()">カメラを再起動</button>
+  <p class="small">カメラが起動しない場合は、iPhoneの「設定」→「Safari」→「カメラ」と、Webサイト側のカメラ許可を確認してください。</p>
+</main>
+<script>
+(function(){
+  const params = new URLSearchParams(location.search);
+  const returnUrl = params.get('return') || '';
+  const message = document.getElementById('message');
+  // 戻り先はGoogle Apps ScriptのWebアプリURLに限定
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(returnUrl)) {
+    message.textContent = '戻り先URLが正しくありません。在庫管理画面から読み取りボタンを押してください。';
+    return;
+  }
+  if (!window.Html5Qrcode) {
+    message.textContent = '読み取りライブラリを読み込めませんでした。通信環境を確認して再読み込みしてください。';
+    return;
+  }
+  const scanner = new Html5Qrcode('reader');
+  let completed = false;
+  const config = { fps: 12, qrbox: { width: 280, height: 150 }, aspectRatio: 1.777778,
+    formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E] };
+  Html5Qrcode.getCameras().then(cameras => {
+    if (!cameras || !cameras.length) throw new Error('利用できるカメラが見つかりません。');
+    const back = cameras.find(c => /back|rear|environment|背面/i.test(c.label)) || cameras[cameras.length - 1];
+    return scanner.start(back.id, config, decodedText => {
+      if (completed) return;
+      const jan = String(decodedText || '').replace(/[^0-9]/g, '');
+      if (![8,12,13,14].includes(jan.length)) {
+        message.textContent = 'JANコードとして認識できませんでした。バーコードを枠内に合わせてください。';
+        return;
+      }
+      completed = true;
+      message.textContent = '読み取り成功：' + jan + '　在庫管理画面へ戻ります…';
+      scanner.stop().catch(() => {}).finally(() => {
+        const target = new URL(returnUrl);
+        target.searchParams.set('jan', jan);
+        location.href = target.toString();
+      });
+    }, () => {});
+  }).catch(err => {
+    message.textContent = 'カメラを起動できませんでした：' + (err && err.message ? err.message : err) + '。Safariのカメラ許可とHTTPS接続を確認してください。';
+  });
+})();
+</script>
+</body>
+</html>
